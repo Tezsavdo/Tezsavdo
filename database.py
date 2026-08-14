@@ -1,6 +1,14 @@
+import os
 import sqlite3
 
-DB_NAME = "shop.db"
+# Railway'da doimiy volume /data ga ulangan. Lokal ishga tushirishda
+# (kompyuterda) DB_PATH bo'lmasa, joriy papkadagi shop.db ishlatiladi.
+DB_NAME = os.getenv("DB_PATH", "shop.db")
+
+# Agar volume papkasi ko'rsatilgan bo'lsa, u mavjudligiga ishonch hosil qilamiz
+_db_dir = os.path.dirname(DB_NAME)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 
 
 def get_conn():
@@ -97,3 +105,45 @@ def add_product(category_id, name, price, description=""):
     )
     conn.commit()
     conn.close()
+
+
+def add_category(name):
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def delete_category(category_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM products WHERE category_id = ?", (category_id,))
+    conn.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_product(product_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    conn.commit()
+    conn.close()
+
+
+def update_product_price(product_id, new_price):
+    conn = get_conn()
+    conn.execute("UPDATE products SET price = ? WHERE id = ?", (new_price, product_id))
+    conn.commit()
+    conn.close()
+
+
+def get_all_products():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT products.*, categories.name as category_name "
+        "FROM products JOIN categories ON products.category_id = categories.id "
+        "ORDER BY categories.name, products.name"
+    ).fetchall()
+    conn.close()
+    return rows

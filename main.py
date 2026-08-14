@@ -8,8 +8,16 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery
 
-from config import BOT_TOKEN, ADMIN_ID
-from database import init_db, get_categories, get_product
+from config import BOT_TOKEN, ADMIN_ID, ADMIN_IDS
+from database import (
+    init_db,
+    get_categories,
+    get_product,
+    add_category,
+    add_product,
+    delete_product,
+    get_all_products,
+)
 from keyboards import (
     main_menu_kb,
     categories_kb,
@@ -19,6 +27,10 @@ from keyboards import (
     phone_request_kb,
     payment_kb,
     confirm_kb,
+    admin_menu_kb,
+    admin_categories_kb,
+    admin_products_delete_kb,
+    admin_cancel_kb,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +48,21 @@ class Checkout(StatesGroup):
     address = State()
     payment = State()
     confirm = State()
+
+
+class AdminAddCategory(StatesGroup):
+    name = State()
+
+
+class AdminAddProduct(StatesGroup):
+    category = State()
+    name = State()
+    price = State()
+    description = State()
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 
 def get_cart(user_id: int) -> dict:
@@ -230,11 +257,11 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         f"🆔 User ID: {user_id}"
     )
 
-    if ADMIN_ID:
+    for admin_id in ADMIN_IDS:
         try:
-            await bot.send_message(ADMIN_ID, order_text, parse_mode="HTML")
+            await bot.send_message(admin_id, order_text, parse_mode="HTML")
         except Exception as e:
-            logging.error(f"Admin'ga yuborishda xato: {e}")
+            logging.error(f"Admin'ga ({admin_id}) yuborishda xato: {e}")
 
     CARTS[user_id] = {}
     await state.clear()
@@ -252,8 +279,154 @@ async def cancel_order(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ---------- ADMIN PANEL ----------
+
+@dp.message(F.text == "/admin")
+async def admin_panel(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer("🛠 Admin panel:", reply_markup=admin_menu_kb())
+
+
+@dp.callback_query(F.data == "admin_cancel")
+async def admin_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("🛠 Admin panel:", reply_markup=admin_menu_kb())
+    await callback.answer()
+
+
+# --- kategoriya qo'shish ---
+
+@dp.callback_query(F.data == "admin_add_cat")
+async def admin_add_cat_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "Yangi kategoriya nomini kiriting:", reply_markup=admin_cancel_kb()
+    )
+    await state.set_state(AdminAddCategory.name)
+    await callback.answer()
+
+
+@dp.message(AdminAddCategory.name)
+async def admin_add_cat_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    add_category(message.text.strip())
+    await state.clear()
+    await message.answer(f"✅ Kategoriya qo'shildi: {message.text.strip()}", reply_markup=admin_menu_kb())
+
+
+# --- mahsulot qo'shish ---
+
+@dp.callback_query(F.data == "admin_add_prod")
+async def admin_add_prod_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    if not get_categories():
+        await callback.answer("Avval kategoriya qo'shing!", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "Qaysi kategoriyaga qo'shamiz?", reply_markup=admin_categories_kb()
+    )
+    await state.set_state(AdminAddProduct.category)
+    await callback.answer()
+
+
+@dp.callback_query(AdminAddProduct.category, F.data.startswith("admin_cat_"))
+async def admin_add_prod_category(callback: CallbackQuery, state: FSMContext):
+    category_id = int(callback.data.split("_")[-1])
+    await state.update_data(category_id=category_id)
+    await callback.message.edit_text(
+        "Mahsulot nomini kiriting:", reply_markup=admin_cancel_kb()
+    )
+    await state.set_state(AdminAddProduct.name)
+    await callback.answer()
+
+
+@dp.message(AdminAddProduct.name)
+async def admin_add_prod_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text.strip())
+    await message.answer("Narxini kiriting (so'mda, faqat raqam):", reply_markup=admin_cancel_kb())
+    await state.set_state(AdminAddProduct.price)
+
+
+@dp.message(AdminAddProduct.price)
+async def admin_add_prod_price(message: Message, state: FSMContext):
+    try:
+        price = int(message.text.strip().replace(" ", ""))
+    except ValueError:
+        await message.answer("❗️ Narxni faqat raqam ko'rinishida kiriting, masalan: 25000")
+        return
+    await state.update_data(price=price)
+    await message.answer(
+        "Mahsulot tavsifini kiriting (yoki '-' agar bo'lmasa):", reply_markup=admin_cancel_kb()
+    )
+    await state.set_state(AdminAddProduct.description)
+
+
+@dp.message(AdminAddProduct.description)
+async def admin_add_prod_description(message: Message, state: FSMContext):
+    data = await state.get_data()
+    description = "" if message.text.strip() == "-" else message.text.strip()
+    add_product(data["category_id"], data["name"], data["price"], description)
+    await state.clear()
+    await message.answer(
+        f"✅ Mahsulot qo'shildi: {data['name']} — {data['price']:,} so'm".replace(",", " "),
+        reply_markup=admin_menu_kb(),
+    )
+
+
+# --- mahsulotlar ro'yxati ---
+
+@dp.callback_query(F.data == "admin_list_prod")
+async def admin_list_products(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    products = get_all_products()
+    if not products:
+        await callback.message.edit_text("Mahsulotlar mavjud emas.", reply_markup=admin_menu_kb())
+        await callback.answer()
+        return
+    lines = ["📋 <b>Barcha mahsulotlar:</b>\n"]
+    for p in products:
+        price = f"{p['price']:,}".replace(",", " ")
+        lines.append(f"• [{p['category_name']}] {p['name']} — {price} so'm")
+    await callback.message.edit_text(
+        "\n".join(lines), reply_markup=admin_menu_kb(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# --- mahsulot o'chirish ---
+
+@dp.callback_query(F.data == "admin_del_prod")
+async def admin_del_prod_list(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    if not get_all_products():
+        await callback.answer("Mahsulotlar mavjud emas.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "O'chirmoqchi bo'lgan mahsulotni tanlang:", reply_markup=admin_products_delete_kb()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_delprod_"))
+async def admin_del_prod_confirm(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    product_id = int(callback.data.split("_")[-1])
+    delete_product(product_id)
+    await callback.message.edit_text("🗑 Mahsulot o'chirildi.", reply_markup=admin_menu_kb())
+    await callback.answer()
+
+
 async def main():
     init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 

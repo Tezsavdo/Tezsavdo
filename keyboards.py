@@ -85,3 +85,50 @@ def confirm_kb():
         ]
     )
     return kb
+
+
+# ---------- ADMIN PANEL ----------
+
+def admin_menu_kb():
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📂 Kategoriya qo'shish", callback_data="admin_add_cat")],
+            [InlineKeyboardButton(text="➕ Mahsulot qo'shish", callback_data="admin_add_prod")],
+            [InlineKeyboardButton(text="📋 Mahsulotlar ro'yxati", callback_data="admin_list_prod")],
+            [InlineKeyboardButton(text="🗑 Mahsulot o'chirish", callback_data="admin_del_prod")],
+        ]
+    )
+    return kb
+
+
+def admin_categories_kb(prefix="admin_cat_"):
+    builder = []
+    for cat in get_categories():
+        builder.append(
+            [InlineKeyboardButton(text=cat["name"], callback_data=f"{prefix}{cat['id']}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=builder)
+
+
+def admin_products_delete_kb():
+    builder = []
+    for p in get_all_products_local():
+        text = f"{p['name']} ({p['category_name']})"
+        builder.append(
+            [InlineKeyboardButton(text=text, callback_data=f"admin_delprod_{p['id']}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=builder)
+
+
+def get_all_products_local():
+    from database import get_all_products
+    return get_all_products()
+
+
+def admin_cancel_kb():
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_cancel")],
+        ]
+    )
+    return kb
